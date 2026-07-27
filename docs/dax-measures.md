@@ -34,7 +34,11 @@ Counts every customer in the customer dimension, regardless of purchase activity
 ```dax
 avg_order_to _pay = AVERAGE(fact_order_process[order_to_pay])
 ```
-Averages the order-to-pay duration tracked in `fact_order_process` (the elapsed time between an order being placed and payment being received), giving a view into fulfillment and collections efficiency. *(The name carries a stray space before "pay" in the model — reproduced here exactly as defined.)*
+Averages `order_to_pay`, a calculated column on `fact_order_process`:
+```dax
+order_to_pay = DATEDIFF(fact_order_process[order_date], fact_order_process[pay_date], DAY)
+```
+This gives the whole number of days between an order being placed and payment being received. Orders without a recorded `pay_date` yet leave `order_to_pay` blank, so they're naturally excluded from the average rather than pulling it down toward zero. *(The measure name carries a stray space before "pay" in the model — reproduced here exactly as defined.)*
 
 ## Row-Level Security
 

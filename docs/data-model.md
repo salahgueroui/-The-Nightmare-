@@ -2,6 +2,18 @@
 
 The Nightmare uses a **Kimball-style star schema**: dimension tables describe *who*, *what*, and *where*, while fact tables hold the measurable events tied to those dimensions. The model covers four business processes — sales, inventory, marketing, and order fulfillment — sharing a common set of conformed dimensions.
 
+## Contents
+
+- [Before & After](#before--after)
+- [At a Glance](#at-a-glance)
+- [Entity-Relationship Diagram](#entity-relationship-diagram)
+- [Dimension Tables](#dimension-tables)
+- [Fact Tables](#fact-tables)
+- [Support Table](#support-table)
+- [Naming Conventions](#naming-conventions)
+- [Power Query Folder Organization](#power-query-folder-organization)
+- [Row-Level Security](#row-level-security)
+
 ## Before & After
 
 Early in the build, every source sheet was loaded and related as-is — duplicate-looking tables, no clear hierarchy, relationships Power BI had guessed on its own:
@@ -11,6 +23,24 @@ Early in the build, every source sheet was loaded and related as-is — duplicat
 After staging, cleaning, and modeling, the same data resolves into a clean star schema:
 
 ![Final star schema](../screenshots/new_data_model.jpg)
+
+## At a Glance
+
+| Layer | Table | Grain | Columns | Rows |
+|---|---|---|---|---|
+| Dimension | [`dim_customer`](#dim_customer--12-columns-60-rows) | One row per customer | 12 | 60 |
+| Dimension | [`dim_product`](#dim_product--8-columns-60-rows) | One row per product | 8 | 60 |
+| Dimension | [`dim_orders_flag`](#dim_orders_flag--5-columns-14-rows) | One row per channel/status/priority combination | 5 | 14 |
+| Dimension | [`dim_geo`](#dim_geo--3-columns-20-rows) | One row per city | 3 | 20 |
+| Dimension | [`dim_campaign`](#dim_campaign--6-columns-6-rows) | One row per campaign | 6 | 6 |
+| Dimension | [`dim_date`](#dim_date) | One row per calendar date | 3 | — |
+| Fact | [`fact_sales`](#fact_sales--13-columns-200-rows) | One row per order line item | 13 | 200 |
+| Fact | [`fact_inventory`](#fact_inventory--3-columns-288-rows) | One row per product per month | 3 | 288 |
+| Fact | [`fact_campaign_spend`](#fact_campaign_spend--5-columns-140-rows) | One row per campaign per day | 5 | 140 |
+| Fact | [`fact_promotion_coverage`](#fact_promotion_coverage--2-columns-30-rows) | One row per campaign–product pairing | 2 | 30 |
+| Fact | [`fact_order_process`](#fact_order_process--7-columns-97-rows) | One row per order | 7 | 97 |
+| Fact | [`fact_sales_targets`](#fact_sales_targets--2-columns-20-rows) | One row per month | 2 | 20 |
+| Support | [`security`](#security--2-columns-5-rows) | One row per user | 2 | 5 |
 
 ## Entity-Relationship Diagram
 
@@ -42,6 +72,28 @@ erDiagram
 
 > `dim_geo` is a **role-playing dimension**: it relates to `fact_sales` twice — once for `ship_to_city_key`, once for `bill_to_city_key` — rather than being duplicated as two physical tables. Only one of the two relationships can be active at a time in Power BI; the inactive one is invoked with `USERELATIONSHIP()` in DAX when a measure needs to analyze by billing city instead of shipping city.
 
+<details>
+<summary>Relationships as a plain list (if the diagram above doesn't render)</summary>
+
+- `dim_customer[customer_id]` 1 → * `fact_sales[customer_id]`
+- `dim_product[product_key]` 1 → * `fact_sales[product_key]`
+- `dim_orders_flag[flag_key]` 1 → * `fact_sales[flag_key]`
+- `dim_geo[geo_key]` 1 → * `fact_sales[ship_to_city_key]` *(active)*
+- `dim_geo[geo_key]` 1 → * `fact_sales[bill_to_city_key]` *(inactive)*
+- `dim_date[Date]` 1 → * `fact_sales[order_date]`
+- `dim_product[product_key]` 1 → * `fact_inventory[product_key]`
+- `dim_date[Date]` 1 → * `fact_inventory[month]`
+- `dim_campaign[campaign_key]` 1 → * `fact_campaign_spend[campaign_key]`
+- `dim_date[Date]` 1 → * `fact_campaign_spend[date]`
+- `dim_campaign[campaign_key]` 1 → * `fact_promotion_coverage[campaign_key]`
+- `dim_product[product_key]` 1 → * `fact_promotion_coverage[product_key]`
+- `dim_customer[customer_id]` 1 → * `fact_order_process[customer_id]`
+- `dim_date[Date]` 1 → * `fact_order_process[order_date]`
+- `dim_date[Date]` 1 → * `fact_sales_targets[date]`
+- `security[region]` ↔ `dim_customer[region_name]` — backs the row-level security role, not a standard star-schema relationship
+
+</details>
+
 ## Dimension Tables
 
 ### `dim_customer` — 12 columns, 60 rows
@@ -70,11 +122,11 @@ One row per product, with standardized category/subcategory names.
 | `product_key` | Surrogate key (index column) |
 | `product_code` | Business key, e.g. `ELE-001` |
 | `product_name` | |
-| `band` | Supplier/brand label |
+| `band` | Product brand — 10 distinct values (Acme, Vanta, Hooli, Globex, Initech, Umbra, Stark, Wayne, Soylent, Lumen) |
 | `category` | e.g. Electronics, Apparel, Home, Sports, Beauty, Industrial |
 | `subcategory` | e.g. Laptops, Kitchen, Skincare |
-| `primary_supplier` | |
-| `unit_price` | |
+| `primary_supplier` | Procurement vendor — 15 distinct values (`Supplier A`–`Supplier O`), independent of brand |
+| `unit_price` | Per-unit sale price; effectively unique per product (60 distinct values across 60 rows) |
 
 ### `dim_orders_flag` — 5 columns, 14 rows
 One row per unique combination of channel, status, and priority.
@@ -132,11 +184,11 @@ Standard calculated date table, related to every fact table via its date column.
 | `bill_to_city_key` | FK → `dim_geo` (inactive relationship) |
 | `flag_key` | FK → `dim_orders_flag` |
 | `order_date` | FK → `dim_date` |
-| `line_total` | |
-| `price` | |
-| `quantity` | |
-| `cost` | |
-| `discount` | |
+| `line_total` | Extended line revenue: `quantity × price × (1 − discount)` |
+| `price` | Unit price at time of sale |
+| `quantity` | Units sold on this line |
+| `cost` | Unit cost of goods (for margin analysis; not part of the `line_total` formula) |
+| `discount` | Discount rate applied to the line — one of 0, 0.05, 0.1, 0.15 (0%–15%), not a flat amount |
 
 ### `fact_inventory` — 3 columns, 288 rows
 **Grain: one row per product per month.** Built by unpivoting a wide, per-month inventory layout.
@@ -177,8 +229,8 @@ Standard calculated date table, related to every fact table via its date column.
 | `ship_date` | |
 | `delivery_date` | |
 | `invoice_date` | |
-| `pay_date` | |
-| `order_to_pay` | Calculated duration between order and payment; feeds the **Average Order to Pay** measure |
+| `pay_date` | Blank for orders not yet paid |
+| `order_to_pay` | Calculated column: `DATEDIFF(order_date, pay_date, DAY)` — whole days between order and payment; blank when `pay_date` is blank. Feeds the **Average Order to Pay** measure |
 
 ### `fact_sales_targets` — 2 columns, 20 rows
 **Grain: one row per month.**
