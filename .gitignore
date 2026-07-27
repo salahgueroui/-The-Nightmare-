@@ -1,0 +1,18 @@
+# Power BI temp/lock files
+~$*.pbix
+*.pbix.lock
+*.pbix.bak
+
+# Excel temp/lock files
+~$*.xlsx
+~$*.xls
+~$*.csv
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor/IDE
+.vscode/
+*.swp
